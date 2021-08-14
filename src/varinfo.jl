@@ -324,14 +324,26 @@ Return the values of all the variables in `vi`.
 
 The values may or may not be transformed to Euclidean space.
 """
-getall(vi::UntypedVarInfo) = vi.metadata.vals
+getall(vi::UntypedVarInfo) = _getvals(vi.metadata)
 getall(vi::TypedVarInfo) = vcat(_getall(vi.metadata)...)
 @generated function _getall(metadata::NamedTuple{names}) where {names}
     exprs = []
     for f in names
-        push!(exprs, :(metadata.$f.vals))
+        push!(exprs, :(_getvals(metadata.$f)))
     end
     return :($(exprs...),)
+end
+
+function _getvals(md::Metadata)
+    # Ensures that we preserve the faster implementation if
+    # no `Dirac` is used in `md`.
+    (eltype(md.dists) <: Dirac || eltype(md.dists) >: Dirac) || return md.vals
+
+    indices = filter(1:length(md.vals)) do i
+        !(md.dists[md.idcs[md.vns[i]]] isa Dirac)
+    end
+    # Allows us to mutate after.
+    return @view md.vals[indices]
 end
 
 """
@@ -341,15 +353,17 @@ Set the values of all the variables in `vi` to `val`.
 
 The values may or may not be transformed to Euclidean space.
 """
-setall!(vi::UntypedVarInfo, val) = vi.metadata.vals .= val
+setall!(vi::UntypedVarInfo, val) = _getvals(vi.metadata) .= val
 setall!(vi::TypedVarInfo, val) = _setall!(vi.metadata, val)
 @generated function _setall!(metadata::NamedTuple{names}, val, start=0) where {names}
     expr = Expr(:block)
     start = :(1)
     for f in names
-        length = :(length(metadata.$f.vals))
+        vals = gensym(:vals)
+        push!(expr.args, :($vals = _getvals(metadata.$f)))
+        length = :(length($vals))
         finish = :($start + $length - 1)
-        push!(expr.args, :(metadata.$f.vals .= val[($start):($finish)]))
+        push!(expr.args, :($vals .= val[($start):($finish)]))
         start = :($start + $length)
     end
     return expr
@@ -436,16 +450,19 @@ end
 end
 @inline function findinds(f_meta, s, ::Val{space}) where {space}
     # Get all the idcs of the vns in `space` and that belong to the selector `s`
-    return filter(
-        (i) ->
-            (s in f_meta.gids[i] || isempty(f_meta.gids[i])) &&
-                (isempty(space) || inspace(f_meta.vns[i], space)),
-        1:length(f_meta.gids),
-    )
+    return filter(1:length(f_meta.gids)) do i
+        (
+            (s in f_meta.gids[i] || isempty(f_meta.gids[i]))
+            && (isempty(space) || inspace(f_meta.vns[i], space))
+            && !(f_meta.dists[f_meta.idcs[f_meta.vns[i]]] isa Dirac)
+        )
+    end
 end
 @inline function findinds(f_meta)
     # Get all the idcs of the vns
-    return filter((i) -> isempty(f_meta.gids[i]), 1:length(f_meta.gids))
+    return filter(1:length(f_meta.gids)) do i
+        isempty(f_meta.gids[i]) && !(f_meta.dists[f_meta.idcs[f_meta.vns[i]]] isa Dirac)
+    end
 end
 
 # Get all vns of variables belonging to spl

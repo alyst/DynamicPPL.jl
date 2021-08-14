@@ -53,6 +53,12 @@ function tilde_assume(
 )
     return assume(rng, sampler, right, vn, vi)
 end
+function tilde_assume(
+    ::IsLeaf, rng, context::AbstractContext, sampler, right::Dirac, vn, vinds, vi
+)
+    set_flag!(vi, vn, "del")
+    return assume(rng, SampleFromPrior(), right, vn, vi)
+end
 function tilde_assume(::IsParent, rng, context::AbstractContext, args...)
     return tilde_assume(rng, childcontext(context), args...)
 end
@@ -299,6 +305,12 @@ function dot_tilde_assume(
     ::IsLeaf, rng, ::AbstractContext, sampler, right, left, vns, inds, vi
 )
     return dot_assume(rng, sampler, right, vns, left, vi)
+end
+function dot_tilde_assume(
+    ::IsLeaf, rng, ::AbstractContext, sampler, right::Union{<:Dirac,<:AbstractArray{<:Dirac}}, left, vns, inds, vi
+)
+    set_flag!(vi, vns[1], "del")
+    return dot_assume(rng, SampleFromPrior(), right, vns, left, vi)
 end
 
 function dot_tilde_assume(::IsParent, context::AbstractContext, args...)
